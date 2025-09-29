@@ -1,20 +1,25 @@
-// index.js
+require('dotenv').config(); // carrega variáveis do .env
+
 const express = require("express");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
-const puppeteer = require("puppeteer"); // Puppeteer completo
+const puppeteer = require("puppeteer");
 
 const app = express();
 app.use(express.json());
 
 let lastMessage = null;
 
-// Configuração do WhatsApp Web
+// HOST e PORT do .env
+const HOST = process.env.HOST || "127.0.0.1";
+const PORT = process.env.PORT || 3000;
+
+// Cliente WhatsApp Web
 const client = new Client({
     authStrategy: new LocalAuth({ clientId: "dremassist" }),
     puppeteer: {
-        headless: true, // roda em background
-        executablePath: puppeteer.executablePath(), // Chromium embutido
+        headless: true,
+        executablePath: puppeteer.executablePath(),
         args: [
             "--no-sandbox",
             "--disable-setuid-sandbox",
@@ -38,37 +43,63 @@ client.on("ready", () => {
     console.log("✅ WhatsApp conectado e pronto!");
 });
 
-// Recebendo mensagens (texto, imagem ou áudio)
+// Recebendo mensagens
 client.on("message", async msg => {
     console.log(`📩 Nova mensagem de ${msg.from}: ${msg.body || '[sem texto]'}`);
 
-    let messageData = {
-        from: msg.from,
-        body: msg.body,
+    const messageData = {
+        typeWebhook: "incomingMessageReceived",
+        instanceData: {
+            idInstance: 1234567890, // substitua pelo seu ID real
+            wid: msg.from,
+            typeInstance: "whatsapp"
+        },
         timestamp: msg.timestamp,
-        type: msg.type
+        idMessage: msg.id._serialized,
+        senderData: {
+            chatId: msg.from,
+            chatName: "",
+            sender: msg.from,
+            senderName: msg._data.notifyName || msg.from,
+            senderContactName: msg._data.notifyName || msg.from
+        },
+        messageData: {}
     };
 
-    // Se a mensagem contém mídia
+    // Texto
+    if (msg.type === "chat" || msg.type === "extendedTextMessage") {
+        messageData.messageData = {
+            typeMessage: "extendedTextMessage",
+            extendedTextMessageData: {
+                text: msg.body,
+                description: "",
+                title: "",
+                previewType: "None",
+                jpegThumbnail: "",
+                forwardingScore: 0,
+                isForwarded: false
+            }
+        };
+    }
+
+    // Mídia
     if (msg.hasMedia) {
         try {
             const media = await msg.downloadMedia();
 
-            messageData.media = {
-                mimetype: media.mimetype,
-                filename: media.filename || 'sem-nome',
-                size: Buffer.from(media.data, 'base64').length
+            let typeMessage = "imageMessage";
+            if (media.mimetype.startsWith("audio/")) typeMessage = "audioMessage";
+            if (media.mimetype.startsWith("video/")) typeMessage = "videoMessage";
+            if (media.mimetype.startsWith("application/")) typeMessage = "documentMessage";
+
+            messageData.messageData = {
+                typeMessage,
+                mediaData: {
+                    mimetype: media.mimetype,
+                    filename: media.filename || "",
+                    data: media.data
+                }
             };
-
-            // Validação básica
-            if (media.mimetype.startsWith("image/")) {
-                console.log("🖼️ Imagem recebida válida!");
-            } else if (media.mimetype.startsWith("audio/")) {
-                console.log("🎵 Áudio recebido válido!");
-            } else {
-                console.log(`📦 Outro tipo de mídia recebido: ${media.mimetype}`);
-            }
-
         } catch (err) {
             console.error("❌ Erro ao processar mídia:", err);
         }
@@ -77,15 +108,27 @@ client.on("message", async msg => {
     lastMessage = messageData;
 });
 
-// Endpoint para n8n
+// Endpoint Webhook
 app.get("/webhook", (req, res) => {
-    if (!lastMessage) return res.json({ status: "ok", message: "Nenhuma mensagem recebida ainda." });
-    res.json(lastMessage);
+    if (!lastMessage) return res.json([]);
+
+    const response = [
+        {
+            headers: req.headers,
+            params: req.params,
+            query: req.query,
+            body: lastMessage,
+            webhookUrl: req.protocol + "://" + req.get("host") + req.originalUrl,
+            executionMode: "test"
+        }
+    ];
+
+    res.json(response);
 });
 
-// Inicia servidor Express
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`🚀 Servidor rodando na porta ${PORT}`));
+// Inicia servidor usando HOST e PORT do .env
+app.listen(PORT, HOST, () => {
+    console.log(`🚀 Servidor rodando em http://${HOST}:${PORT}`);
+});
 
-// Inicializa o cliente WhatsApp
 client.initialize();

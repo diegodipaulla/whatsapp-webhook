@@ -1,0 +1,28 @@
+# Node
+node_modules/
+
+# Environment
+.env
+
+# WhatsApp Web.js session / local auth
+local-auth/
+__sessions__/
+.whatsapp-session/
+
+# Puppeteer / Chromium cache
+*.localstorage
+*.log
+*.tmp
+Default/
+Default-*
+SingletonLock
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.wwebjs_auth
+.wwebjs_cache
