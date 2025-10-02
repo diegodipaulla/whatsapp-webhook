@@ -1,0 +1,4 @@
+{
+  "webhookUrl": "http://localhost:5001/webhook",
+  "apiPort": 3000
+}
