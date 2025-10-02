@@ -1,0 +1,55 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  // The binaryTarget is needed for Electron to know what binary to use.
+  binaryTargets = ["native", "windows"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Setting {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Contact {
+  id        String    @id @default(cuid())
+  chatId    String    @unique // e.g., 55119..._@c.us
+  name      String?   // Name from WA profile
+  pushName  String?   // Name they set for themselves
+  messages  Message[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  chat        Contact  @relation(fields: [contactId], references: [id])
+  contactId   String
+  timestamp   Int
+  body        String?
+  hasMedia    Boolean
+  mediaUrl    String? // Or store media info differently
+  mediaMime   String?
+  mediaFilename String?
+  isQueued    Boolean  @default(false) // Is it in the webhook queue?
+  createdAt   DateTime @default(now())
+}
+
+model WebhookQueue {
+  id          String   @id @default(cuid())
+  payload     String // JSON string of the webhook payload
+  status      String   @default("PENDING") // PENDING, SUCCESS, FAILED
+  retryCount  Int      @default(0)
+  lastAttempt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
