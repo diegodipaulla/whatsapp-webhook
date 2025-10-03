@@ -1,11 +1,24 @@
 const { Client, LocalAuth } = require('whatsapp-web.js');
 const qrcodeTerminal = require('qrcode-terminal');
-const fs = require('fs');
-const qrcode = require('qrcode');
 const axios = require('axios');
 const db = require('./dbService');
+const fs = require('fs');
 
-let client;
+let activeSession = {
+  accountId: null,
+  client: null,
+  status: {
+    connected: false,
+    qrCode: null,
+    message: 'Serviço inativo.'
+  }
+};
+
+function _resetSessionState(message = 'Sessão encerrada.') {
+    activeSession.client = null;
+    activeSession.accountId = null;
+    activeSession.status = { connected: false, qrCode: null, message };
+}
 
 function findChromeOnWindows() {
     const candidates = [
@@ -13,7 +26,6 @@ function findChromeOnWindows() {
         'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
         'C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe',
         'C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe',
-        'C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe',
     ];
     for (const p of candidates) {
         if (fs.existsSync(p)) return p;
@@ -21,129 +33,149 @@ function findChromeOnWindows() {
     return null;
 }
 
-async function initialize(win = null) {
-    const chromePath = findChromeOnWindows();
-    console.log('Usando navegador em:', chromePath || '(nenhum — usar Chromium empacotado)');
+async function startSession() {
+  if (activeSession.client) {
+    console.log('Uma sessão já está ativa ou em processo de inicialização.');
+    return;
+  }
 
-    client = new Client({
-        authStrategy: new LocalAuth({ clientId: "whatsapp-session" }),
-        puppeteer: {
-            headless: true,
-            executablePath: chromePath || undefined,
-            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
-        }
-    });
+  console.log('Iniciando nova sessão de WhatsApp...');
+  const clientId = 'principal';
+  const client = new Client({
+    authStrategy: new LocalAuth({ clientId }),
+    puppeteer: {
+      headless: true,
+      executablePath: findChromeOnWindows() || undefined,
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    }
+  });
 
-    // Handlers for UI communication
-    client.on('qr', async (qr) => {
-        console.log('QR recebido — escaneie com o WhatsApp:');
-        qrcodeTerminal.generate(qr, { small: true });
-        if (win) {
-            try {
-                const qrDataURL = await qrcode.toDataURL(qr);
-                win.webContents.send('qr-code', qrDataURL);
-            } catch (err) {
-                console.error('Erro ao gerar DataURL do QR:', err);
-            }
-        }
-    });
+  activeSession.client = client;
+  activeSession.status.message = 'Inicializando cliente...';
 
-    client.on('ready', () => {
-        console.log('Cliente pronto e conectado!');
-        if (win) {
-            win.webContents.send('connected');
-            setTimeout(() => {
-                if (win && !win.isDestroyed()) win.close();
-            }, 3000);
-        }
-    });
+  setupEventHandlers(client, clientId);
 
-    client.on('auth_failure', (msg) => {
-        console.error('Falha de autenticação:', msg);
-        if (win) win.webContents.send('auth-failure');
-    });
+  try {
+    await client.initialize();
+  } catch (error) {
+    console.error(`Falha CRÍTICA ao inicializar o cliente para ${clientId}:`, error);
+    _resetSessionState(`Erro crítico: ${error.message}`);
+  }
+}
 
-    client.on('disconnected', (reason) => {
-        console.log('Desconectado:', reason);
-    });
+function setupEventHandlers(client, clientId) {
+  client.on('qr', (qr) => {
+    console.log(`[${clientId}] QR recebido. Escaneie com o WhatsApp.`);
+    qrcodeTerminal.generate(qr, { small: true });
+    activeSession.status = { connected: false, qrCode: qr, message: 'Por favor, escaneie o QR Code.' };
+  });
 
-    // === Webhook Logic ===
-    client.on('message', async (message) => {
-        if (message.body === null || message.body === '') return;
-        
-        // Salva a mensagem no banco de dados
-        await db.logMessage(message);
+  client.on('ready', async () => {
+    console.log(`[${clientId}] Cliente pronto e conectado!`);
+    const account = await db.findOrCreateAccount(client.info.wid._serialized, client.info.pushname);
+    activeSession.accountId = account.id;
+    activeSession.status = { connected: true, qrCode: null, message: 'Cliente conectado com sucesso.' };
+  });
 
-        const payload = {
-            chatId: message.from,
-            timestamp: message.timestamp,
-            body: message.body,
-            hasMedia: message.hasMedia,
-            media: null,
-        };
+  client.on('disconnected', (reason) => {
+    console.log(`[${clientId}] Cliente desconectado:`, reason);
+    // Only reset the state. Don't call logoutSession from here to avoid race conditions.
+    _resetSessionState(`Desconectado: ${reason}`);
+  });
 
-        if (message.hasMedia) {
-            try {
-                const media = await message.downloadMedia();
-                payload.media = {
-                    mimetype: media.mimetype,
-                    filename: media.filename,
-                    data: media.data, // base64 encoded
-                };
-            } catch (error) {
-                console.error('Falha ao baixar mídia:', error);
-            }
-        }
+  client.on('auth_failure', (msg) => {
+    console.error(`[${clientId}] Falha de autenticação:`, msg);
+    _resetSessionState(`Falha de autenticação: ${msg}`);
+  });
 
+  client.on('message', async (message) => {
+    // Ignore messages that have no body and no media
+    if (!message.body && !message.hasMedia) return;
+    if (!activeSession.accountId) return;
+
+    let downloadedMedia = null;
+    if (message.hasMedia) {
         try {
-            const webhookUrl = await db.getSetting('webhookUrl');
-            if (!webhookUrl) {
-                console.warn('URL de webhook não configurada. Pulando envio.');
-                return;
-            }
-            console.log('Enviando webhook para:', webhookUrl);
-            await axios.post(webhookUrl, payload);
-            console.log('Webhook enviado com sucesso.');
+            downloadedMedia = await message.downloadMedia();
         } catch (error) {
-            if (error.response) {
-                // O servidor respondeu com um status de erro (4xx, 5xx)
-                console.error(`Falha no webhook: Servidor respondeu com status ${error.response.status}`, error.response.data);
-            } else if (error.request) {
-                // A requisição foi feita mas não houve resposta (ex: ECONNREFUSED)
-                console.error('Falha no webhook: Não foi possível conectar ao servidor. Adicionando à fila.', error.code);
-                await db.createQueuedWebhook(payload);
-            } else {
-                // Erro ao configurar a requisição
-                console.error('Falha no webhook: Erro ao configurar a requisição.', error.message);
-            }
+            console.error(`[${clientId}] Falha ao baixar mídia:`, error);
         }
-    });
+    }
+
+    // Log the message with the (potentially null) media object
+    await db.logMessage(activeSession.accountId, message, downloadedMedia);
+
+    // Construct the webhook payload
+    const payload = {
+        chatId: message.from,
+        timestamp: message.timestamp,
+        body: message.body,
+        hasMedia: message.hasMedia,
+        media: downloadedMedia ? {
+            mimetype: downloadedMedia.mimetype,
+            filename: downloadedMedia.filename,
+            data: downloadedMedia.data, // base64 encoded
+        } : null,
+    };
+
+    const webhookUrl = await db.getSetting(activeSession.accountId, 'webhookUrl');
+
+    if (!webhookUrl || webhookUrl.trim() === '') {
+      return;
+    }
 
     try {
-        console.log('Tentando inicializar o cliente WhatsApp...');
-        await client.initialize();
-        console.log('Cliente WhatsApp inicializado com sucesso.');
+      console.log(`[${clientId}] Enviando webhook para: ${webhookUrl}`);
+      await axios.post(webhookUrl, payload);
     } catch (error) {
-        console.error('Falha CRÍTICA ao inicializar o cliente WhatsApp:', error);
-        if (win) win.webContents.send('auth-failure');
+      console.error(`[${clientId}] Falha ao enviar webhook. Adicionando à fila.`);
+      await db.createQueuedWebhook(activeSession.accountId, payload);
+    }
+  });
+}
+
+async function logoutSession() {
+    if (!activeSession.client) return;
+    const clientToDestroy = activeSession.client;
+
+    console.log('Fazendo logout da sessão atual...');
+    try {
+        await clientToDestroy.logout();
+    } catch (error) {
+        console.error('Erro durante o logout (pode ser ignorado se for seguido por destroy):', error.message);
+    }
+
+    try {
+        await clientToDestroy.destroy();
+        console.log('Cliente destruído com sucesso.');
+    } catch (error) {
+        console.error('Erro ao destruir o cliente:', error.message);
     }
     
-    return client;
+    // If the disconnected event didn't fire for some reason, reset state here anyway.
+    if (activeSession.client) {
+        _resetSessionState();
+    }
 }
 
 async function sendMessage(chatId, message) {
-    if (!client) {
-        console.error('Erro: Cliente WhatsApp não inicializado.');
-        throw new Error('WhatsApp client not ready.');
-    }
-    try {
-        await client.sendMessage(chatId, message);
-        console.log(`Mensagem de resposta enviada para ${chatId}`);
-        return { success: true };
-    } catch (error) {
-        console.error(`Falha ao enviar mensagem para ${chatId}:`, error);
-        throw new Error('Failed to send WhatsApp message.');
-    }
+  if (!activeSession.client || !activeSession.status.connected) {
+    throw new Error('Cliente WhatsApp não está pronto ou conectado.');
+  }
+  await activeSession.client.sendMessage(chatId, message);
 }
 
-module.exports = { initialize, sendMessage };
+function getStatus() {
+  return activeSession.status;
+}
+
+function getActiveAccountId() {
+  return activeSession.accountId;
+}
+
+// For testing purposes only
+function _resetState() {
+    _resetSessionState('Serviço inativo.');
+}
+
+module.exports = { startSession, logoutSession, sendMessage, getStatus, getActiveAccountId, _resetState };

@@ -3,13 +3,24 @@ import axios from 'axios';
 
 const API_URL = 'http://localhost:3000/api';
 
+const getStatusBadge = (status) => {
+  switch (status) {
+    case 'SUCCESS':
+      return <span className="badge bg-success">Sucesso</span>;
+    case 'FAILED':
+      return <span className="badge bg-danger">Falhou</span>;
+    case 'PENDING':
+    default:
+      return <span className="badge bg-warning text-dark">Pendente</span>;
+  }
+};
+
 function Queue() {
   const [queue, setQueue] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   const fetchQueue = () => {
-    setLoading(true);
     axios.get(`${API_URL}/queue`)
       .then(response => {
         setQueue(response.data);
@@ -17,18 +28,24 @@ function Queue() {
       })
       .catch(error => {
         console.error("Error fetching queue:", error);
-        setError('Falha ao carregar a fila.');
+        // If the error is a 400, it means no active session, which is not a critical error.
+        if (error.response && error.response.status === 400) {
+            setQueue([]); // Clear queue if no active session
+        } else {
+            setError('Falha ao carregar a fila.');
+        }
         setLoading(false);
       });
   };
 
   useEffect(() => {
     fetchQueue();
+    const interval = setInterval(fetchQueue, 5000); // Refresh every 5 seconds
+    return () => clearInterval(interval);
   }, []);
 
   const handleRetry = (id) => {
     axios.post(`${API_URL}/queue/retry/${id}`)
-      .then(() => fetchQueue()) // Refresh the queue
       .catch(error => {
         console.error(`Error retrying webhook ${id}:`, error);
         alert('Falha ao reenviar o webhook.');
@@ -37,59 +54,60 @@ function Queue() {
 
   const handleDelete = (id) => {
     axios.delete(`${API_URL}/queue/${id}`)
-      .then(() => fetchQueue()) // Refresh the queue
+      .then(() => fetchQueue()) // Re-fetch queue after deleting
       .catch(error => {
         console.error(`Error deleting webhook ${id}:`, error);
         alert('Falha ao deletar o webhook.');
       });
   };
 
-  if (loading) {
-    return <div>Carregando fila...</div>;
+  if (loading && queue.length === 0) {
+    return <div className="d-flex justify-content-center mt-5"><div className="spinner-border" role="status"><span className="visually-hidden">Carregando...</span></div></div>;
   }
 
   if (error) {
-    return <div className="text-red-600">{error}</div>;
+    return <div className="alert alert-danger">{error}</div>;
   }
 
   return (
-    <div className="flex flex-col">
-      <div className="-my-2 overflow-x-auto sm:-mx-6 lg:-mx-8">
-        <div className="py-2 align-middle inline-block min-w-full sm:px-6 lg:px-8">
-          <div className="shadow overflow-hidden border-b border-gray-200 sm:rounded-lg">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Data</th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Payload</th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tentativas</th>
-                  <th scope="col" className="relative px-6 py-3">
-                    <span className="sr-only">Ações</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {queue.map((item) => (
-                  <tr key={item.id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{new Date(item.createdAt).toLocaleString()}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500"><pre className="overflow-x-auto">{JSON.stringify(JSON.parse(item.payload), null, 2)}</pre></td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${item.status === 'PENDING' ? 'bg-yellow-100 text-yellow-800' : item.status === 'SUCCESS' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{item.retryCount}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button onClick={() => handleRetry(item.id)} className="text-indigo-600 hover:text-indigo-900">Reenviar</button>
-                      <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:text-red-900 ml-4">Deletar</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+    <div className="card">
+      <div className="card-body">
+        <h3 className="card-title">Fila de Webhooks</h3>
+        <p className="card-text text-secondary">A lista de webhooks que falharam e aguardam retentativa. A lista atualiza a cada 5 segundos.</p>
+      </div>
+      <div className="table-responsive scrollable-list">
+        <table className="table table-striped table-hover mb-0">
+          <thead className="table-light" style={{ position: 'sticky', top: 0 }}>
+            <tr>
+              <th>Data</th>
+              <th>Payload</th>
+              <th>Status</th>
+              <th>Tentativas</th>
+              <th className="text-end">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            {queue.length > 0 ? queue.map((item) => (
+              <tr key={item.id}>
+                <td className="align-middle"><small>{new Date(item.createdAt).toLocaleString()}</small></td>
+                <td className="align-middle"><pre className="mb-0" style={{ maxHeight: '150px', overflowY: 'auto' }}>{JSON.stringify(JSON.parse(item.payload), null, 2)}</pre></td>
+                <td className="align-middle">{getStatusBadge(item.status)}</td>
+                <td className="align-middle text-center">{item.retryCount}</td>
+                <td className="text-end align-middle">
+                  <button onClick={() => handleRetry(item.id)} className="btn btn-sm btn-outline-primary me-2">Reenviar</button>
+                  <button onClick={() => handleDelete(item.id)} className="btn btn-sm btn-outline-danger">Deletar</button>
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan="5" className="text-center text-secondary py-5">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" fill="currentColor" className="bi bi-moon-stars" viewBox="0 0 16 16"><path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278zM4.615 1.033A7.03 7.03 0 0 0 8.344 15a7.03 7.03 0 0 0 3.729-12.584.787.787 0 0 1-.81.316.733.733 0 0 1-.031-.893A6.98 6.98 0 0 0 8.344 0a6.98 6.98 0 0 0-3.729 1.033z"/><path d="M10.794 3.148a.217.217 0 0 1 .412 0l.387 1.162c.173.518.579.924 1.097 1.097l1.162.387a.217.217 0 0 1 0 .412l-1.162.387a1.734 1.734 0 0 0-1.097 1.097l-.387 1.162a.217.217 0 0 1-.412 0l-.387-1.162A1.734 1.734 0 0 0 9.31 6.593l-1.162-.387a.217.217 0 0 1 0-.412l1.162-.387a1.734 1.734 0 0 0 1.097-1.097l.387-1.162zM13.863.099a.145.145 0 0 1 .274 0l.258.774c.115.346.386.617.732.732l.774.258a.145.145 0 0 1 0 .274l-.774.258a1.156 1.156 0 0 0-.732.732l-.258.774a.145.145 0 0 1-.274 0l-.258-.774a1.156 1.156 0 0 0-.732-.732l-.774-.258a.145.145 0 0 1 0-.274l.774-.258c.346-.115.617-.386.732-.732L13.863.1z"/></svg>
+                    <p className="mt-3">A fila está vazia.</p>
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
     </div>
   );

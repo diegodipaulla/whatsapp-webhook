@@ -6,7 +6,8 @@ module.exports = {
   entry: './src/index.js',
   output: {
     path: path.resolve(__dirname, 'dist'),
-    filename: 'bundle.js',
+    filename: '[name].bundle.js',
+    chunkFilename: '[id].chunk.js',
     publicPath: '/',
   },
   module: {
@@ -20,7 +21,7 @@ module.exports = {
       },
       {
         test: /\.css$/,
-        use: ['style-loader', 'css-loader', 'postcss-loader'],
+        use: ['style-loader', 'css-loader'],
       },
     ],
   },
@@ -39,5 +40,10 @@ module.exports = {
   },
   resolve: {
     extensions: ['.js', '.jsx'],
+  },
+  externals: {
+    react: 'React',
+    'react-dom': 'ReactDOM',
+    'react-dom/client': 'ReactDOM',
   },
 };
