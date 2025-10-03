@@ -2,7 +2,7 @@
 // learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // The binaryTarget is needed for Electron to know what binary to use.
   binaryTargets = ["native", "windows"]
 }
@@ -12,17 +12,39 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Represents a single connected WhatsApp account
+model WhatsappAccount {
+  id        String   @id @default(cuid())
+  wppId     String   @unique // The user's WhatsApp ID (e.g., 5511...@c.us)
+  name      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  settings  Setting[]
+  messages  Message[]
+  queue     WebhookQueue[]
+}
+
+// Settings are now per-account
 model Setting {
   id        String   @id @default(cuid())
-  key       String   @unique
+  key       String
   value     String
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Relation to a specific WhatsApp account
+  account   WhatsappAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  whatsappAccountId String
+
+  @@unique([key, whatsappAccountId]) // A key must be unique per account
 }
 
+// Contacts are global, as they can be talked to by multiple accounts
 model Contact {
   id        String    @id @default(cuid())
-  chatId    String    @unique // e.g., 55119..._@c.us
+  chatId    String    @unique // e.g., 55119...@c.us
   name      String?   // Name from WA profile
   pushName  String?   // Name they set for themselves
   messages  Message[]
@@ -30,11 +52,10 @@ model Contact {
   updatedAt DateTime  @updatedAt
 }
 
+// Messages are now per-account
 model Message {
   id          String   @id @default(cuid())
-  chat        Contact  @relation(fields: [contactId], references: [id])
-  contactId   String
-  timestamp   Int
+  timestamp   BigInt
   body        String?
   hasMedia    Boolean
   mediaUrl    String? // Or store media info differently
@@ -42,8 +63,17 @@ model Message {
   mediaFilename String?
   isQueued    Boolean  @default(false) // Is it in the webhook queue?
   createdAt   DateTime @default(now())
+
+  // Relation to a specific WhatsApp account
+  account   WhatsappAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  whatsappAccountId String
+
+  // Relation to a contact
+  chat        Contact  @relation(fields: [contactId], references: [id])
+  contactId   String
 }
 
+// The webhook queue is now per-account
 model WebhookQueue {
   id          String   @id @default(cuid())
   payload     String // JSON string of the webhook payload
@@ -52,4 +82,8 @@ model WebhookQueue {
   lastAttempt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  // Relation to a specific WhatsApp account
+  account   WhatsappAccount @relation(fields: [whatsappAccountId], references: [id], onDelete: Cascade)
+  whatsappAccountId String
 }
