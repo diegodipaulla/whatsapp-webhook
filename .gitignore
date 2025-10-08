@@ -27,3 +27,5 @@ Thumbs.db
 .wwebjs_auth
 .wwebjs_cache
 /generated/prisma
+"prisma/dev.db" 
+*.db"prisma/dev.db" 

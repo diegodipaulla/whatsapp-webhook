@@ -12,13 +12,29 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  whatsappAccounts WhatsappAccount[]
+}
+
 // Represents a single connected WhatsApp account
 model WhatsappAccount {
   id        String   @id @default(cuid())
   wppId     String   @unique // The user's WhatsApp ID (e.g., 5511...@c.us)
   name      String?
+  active    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  // Relation to a user
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
 
   // Relations
   settings  Setting[]
@@ -76,7 +92,7 @@ model Message {
 // The webhook queue is now per-account
 model WebhookQueue {
   id          String   @id @default(cuid())
-  payload     String // JSON string of the webhook payload
+  payload     Json // JSON string of the webhook payload
   status      String   @default("PENDING") // PENDING, SUCCESS, FAILED
   retryCount  Int      @default(0)
   lastAttempt DateTime?

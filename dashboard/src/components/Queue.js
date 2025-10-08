@@ -76,26 +76,30 @@ function Queue() {
         <p className="card-text text-secondary">A lista de webhooks que falharam e aguardam retentativa. A lista atualiza a cada 5 segundos.</p>
       </div>
       <div className="table-responsive scrollable-list">
-        <table className="table table-striped table-hover mb-0">
+        <table className="table table-modern table-hover mb-0">
           <thead className="table-light" style={{ position: 'sticky', top: 0 }}>
             <tr>
-              <th>Data</th>
-              <th>Payload</th>
-              <th>Status</th>
-              <th>Tentativas</th>
-              <th className="text-end">Ações</th>
+              <th className="th-status">Status</th>
+              <th className="th-attempts">Tentativas</th>
+              <th className="th-actions">Ações</th>
+              <th className="th-date">Data</th>
+              <th className="th-payload">Payload</th>
             </tr>
           </thead>
           <tbody>
             {queue.length > 0 ? queue.map((item) => (
               <tr key={item.id}>
-                <td className="align-middle"><small>{new Date(item.createdAt).toLocaleString()}</small></td>
-                <td className="align-middle"><pre className="mb-0" style={{ maxHeight: '150px', overflowY: 'auto' }}>{JSON.stringify(JSON.parse(item.payload), null, 2)}</pre></td>
-                <td className="align-middle">{getStatusBadge(item.status)}</td>
+                <td className="align-middle text-center">{getStatusBadge(item.status)}</td>
                 <td className="align-middle text-center">{item.retryCount}</td>
-                <td className="text-end align-middle">
+                <td className="align-middle text-center">
                   <button onClick={() => handleRetry(item.id)} className="btn btn-sm btn-outline-primary me-2">Reenviar</button>
                   <button onClick={() => handleDelete(item.id)} className="btn btn-sm btn-outline-danger">Deletar</button>
+                </td>
+                <td className="align-middle"><small>{new Date(item.createdAt).toLocaleString()}</small></td>
+                <td className="align-middle">
+                  <div className="payload-container">
+                    <pre className="mb-0">{JSON.stringify(JSON.parse(item.payload), null, 2)}</pre>
+                  </div>
                 </td>
               </tr>
             )) : (
