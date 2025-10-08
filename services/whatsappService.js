@@ -6,6 +6,7 @@ const fs = require('fs');
 
 let activeSession = {
   accountId: null,
+  userId: null,
   client: null,
   status: {
     connected: false,
@@ -17,6 +18,7 @@ let activeSession = {
 function _resetSessionState(message = 'Sessão encerrada.') {
     activeSession.client = null;
     activeSession.accountId = null;
+    activeSession.userId = null;
     activeSession.status = { connected: false, qrCode: null, message };
 }
 
@@ -33,7 +35,7 @@ function findChromeOnWindows() {
     return null;
 }
 
-async function startSession() {
+async function startSession(userId) {
   if (activeSession.client) {
     console.log('Uma sessão já está ativa ou em processo de inicialização.');
     return;
@@ -51,9 +53,10 @@ async function startSession() {
   });
 
   activeSession.client = client;
+  activeSession.userId = userId;
   activeSession.status.message = 'Inicializando cliente...';
 
-  setupEventHandlers(client, clientId);
+  setupEventHandlers(client, clientId, userId);
 
   try {
     await client.initialize();
@@ -63,7 +66,7 @@ async function startSession() {
   }
 }
 
-function setupEventHandlers(client, clientId) {
+function setupEventHandlers(client, clientId, userId) {
   client.on('qr', (qr) => {
     console.log(`[${clientId}] QR recebido. Escaneie com o WhatsApp.`);
     qrcodeTerminal.generate(qr, { small: true });
@@ -72,14 +75,13 @@ function setupEventHandlers(client, clientId) {
 
   client.on('ready', async () => {
     console.log(`[${clientId}] Cliente pronto e conectado!`);
-    const account = await db.findOrCreateAccount(client.info.wid._serialized, client.info.pushname);
+    const account = await db.findOrCreateAccount(client.info.wid._serialized, client.info.pushname, userId);
     activeSession.accountId = account.id;
     activeSession.status = { connected: true, qrCode: null, message: 'Cliente conectado com sucesso.' };
   });
 
   client.on('disconnected', (reason) => {
     console.log(`[${clientId}] Cliente desconectado:`, reason);
-    // Only reset the state. Don't call logoutSession from here to avoid race conditions.
     _resetSessionState(`Desconectado: ${reason}`);
   });
 
@@ -89,7 +91,6 @@ function setupEventHandlers(client, clientId) {
   });
 
   client.on('message', async (message) => {
-    // Ignore messages that have no body and no media
     if (!message.body && !message.hasMedia) return;
     if (!activeSession.accountId) return;
 
@@ -102,10 +103,8 @@ function setupEventHandlers(client, clientId) {
         }
     }
 
-    // Log the message with the (potentially null) media object
     await db.logMessage(activeSession.accountId, message, downloadedMedia);
 
-    // Construct the webhook payload
     const payload = {
         chatId: message.from,
         timestamp: message.timestamp,
@@ -152,7 +151,6 @@ async function logoutSession() {
         console.error('Erro ao destruir o cliente:', error.message);
     }
     
-    // If the disconnected event didn't fire for some reason, reset state here anyway.
     if (activeSession.client) {
         _resetSessionState();
     }
@@ -173,7 +171,6 @@ function getActiveAccountId() {
   return activeSession.accountId;
 }
 
-// For testing purposes only
 function _resetState() {
     _resetSessionState('Serviço inativo.');
 }

@@ -1,13 +1,22 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+// --- User Management ---
+async function findUserByEmail(email) {
+  return prisma.user.findUnique({ where: { email } });
+}
+
+async function createUser(data) {
+  return prisma.user.create({ data });
+}
+
 // --- Account Management ---
-async function findOrCreateAccount(wppId, name) {
+async function findOrCreateAccount(wppId, name, userId) {
   try {
     const account = await prisma.whatsappAccount.upsert({
       where: { wppId },
       update: { name },
-      create: { wppId, name },
+      create: { wppId, name, userId },
     });
     await seedInitialSettings(account.id);
     return account;
@@ -15,6 +24,27 @@ async function findOrCreateAccount(wppId, name) {
     console.error('Failed to find or create WhatsApp account:', error);
     throw error;
   }
+}
+
+async function getWhatsappAccounts(userId) {
+  return prisma.whatsappAccount.findMany({ where: { userId } });
+}
+
+async function getActiveWhatsappAccount(userId) {
+  return prisma.whatsappAccount.findFirst({ where: { userId, active: true } });
+}
+
+async function setActiveWhatsappAccount(userId, accountId) {
+  await prisma.$transaction([
+    prisma.whatsappAccount.updateMany({
+      where: { userId },
+      data: { active: false },
+    }),
+    prisma.whatsappAccount.update({
+      where: { id: accountId, userId },
+      data: { active: true },
+    }),
+  ]);
 }
 
 // --- Settings Management (Per-Account) ---
@@ -108,7 +138,7 @@ async function createQueuedWebhook(whatsappAccountId, payload) {
     await prisma.webhookQueue.create({
       data: {
         whatsappAccountId,
-        payload: JSON.stringify(payload),
+        payload: payload,
       },
     });
     console.log(`Webhook queued for account ${whatsappAccountId}.`);
@@ -117,15 +147,25 @@ async function createQueuedWebhook(whatsappAccountId, payload) {
   }
 }
 
-async function getQueuedWebhooks(whatsappAccountId) {
+async function getQueuedWebhooks(whatsappAccountId, page = 1, pageSize = 10) {
   try {
-    return await prisma.webhookQueue.findMany({
-      where: { whatsappAccountId },
-      orderBy: { createdAt: 'desc' },
-    });
+    const skip = (page - 1) * pageSize;
+    const take = pageSize;
+
+    const [items, total] = await prisma.$transaction([
+      prisma.webhookQueue.findMany({
+        where: { whatsappAccountId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take,
+      }),
+      prisma.webhookQueue.count({ where: { whatsappAccountId } }),
+    ]);
+
+    return { items, total };
   } catch (error) {
     console.error(`Failed to get queued webhooks for account ${whatsappAccountId}:`, error);
-    return [];
+    return { items: [], total: 0 };
   }
 }
 
@@ -166,6 +206,15 @@ async function updateQueuedWebhook(id, data) {
   }
 }
 
+async function clearWebhookQueue() {
+  try {
+    await prisma.webhookQueue.deleteMany({});
+    console.log('Webhook queue cleared.');
+  } catch (error) {
+    console.error('Failed to clear webhook queue:', error);
+  }
+}
+
 // --- Global (Non-Account-Specific) Functions ---
 async function getGlobalSetting(key) {
     if (key === 'apiPort') return '3000';
@@ -174,7 +223,12 @@ async function getGlobalSetting(key) {
 
 module.exports = {
   prisma,
+  findUserByEmail,
+  createUser,
   findOrCreateAccount,
+  getWhatsappAccounts,
+  getActiveWhatsappAccount,
+  setActiveWhatsappAccount,
   getSetting,
   getAllSettings,
   updateSetting,
@@ -187,4 +241,5 @@ module.exports = {
   getQueuedItem,
   updateQueuedWebhook,
   getGlobalSetting,
+  clearWebhookQueue,
 };

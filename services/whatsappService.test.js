@@ -35,6 +35,11 @@ describe('WhatsApp Service', () => {
     db.getSetting.mockResolvedValue('http://fake.webhook.url');
   });
 
+  afterEach(async () => {
+    // Ensure the session is cleaned up after each test to prevent open handles
+    await whatsappService.logoutSession();
+  });
+
   test('startSession should initialize a client and set up handlers', async () => {
     await whatsappService.startSession();
     expect(Client).toHaveBeenCalledTimes(1);
@@ -86,10 +91,52 @@ describe('WhatsApp Service', () => {
     const readyCallback = mockClient.on.mock.calls.find(call => call[0] === 'ready')[1];
     await readyCallback();
     const messageCallback = mockClient.on.mock.calls.find(call => call[0] === 'message')[1];
-    const mockMessage = { from: 'sender@c.us', body: 'Hello', timestamp: 123 };
+    const mockMessage = { from: 'sender@c.us', body: 'Hello', timestamp: 123, hasMedia: false, _data: {} };
     await messageCallback(mockMessage);
-    expect(db.logMessage).toHaveBeenCalledWith('test-account-id', mockMessage);
+    // The third argument is `downloadedMedia`, which is null when hasMedia is false
+    expect(db.logMessage).toHaveBeenCalledWith('test-account-id', mockMessage, null);
     expect(axios.post).toHaveBeenCalledWith('http://fake.webhook.url', expect.any(Object));
+  });
+
+  test('should download media, log, and call webhook on message with media', async () => {
+    await whatsappService.startSession();
+    const readyCallback = mockClient.on.mock.calls.find(call => call[0] === 'ready')[1];
+    await readyCallback();
+
+    const messageCallback = mockClient.on.mock.calls.find(call => call[0] === 'message')[1];
+
+    const mockMedia = {
+      mimetype: 'image/jpeg',
+      filename: 'test.jpg',
+      data: 'base64-encoded-data',
+    };
+
+    const mockMessageWithMedia = {
+      from: 'sender@c.us',
+      body: 'A nice picture',
+      timestamp: 456,
+      hasMedia: true,
+      _data: {},
+      downloadMedia: jest.fn().mockResolvedValue(mockMedia),
+    };
+
+    await messageCallback(mockMessageWithMedia);
+
+    // Check that media was downloaded
+    expect(mockMessageWithMedia.downloadMedia).toHaveBeenCalledTimes(1);
+
+    // Check that the message was logged with the media
+    expect(db.logMessage).toHaveBeenCalledWith('test-account-id', mockMessageWithMedia, mockMedia);
+
+    // Check that the webhook was called with the correct payload
+    const expectedPayload = {
+      chatId: mockMessageWithMedia.from,
+      timestamp: mockMessageWithMedia.timestamp,
+      body: mockMessageWithMedia.body,
+      hasMedia: true,
+      media: mockMedia,
+    };
+    expect(axios.post).toHaveBeenCalledWith('http://fake.webhook.url', expectedPayload);
   });
 
   test('should queue webhook if axios post fails', async () => {

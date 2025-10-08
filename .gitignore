@@ -1,29 +1,58 @@
-# Node
+# System files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Dependency directories
 node_modules/
+/dashboard/node_modules
+/dashboard1/node_modules
+/.pnpm
+pnpm-lock.yaml
 
-# Environment
+# Build output
+/build
+/dist
+/dashboard/dist
+/.next/
+/out/
+
+# Environment variables
 .env
+.env.*
+!.env.example
 
-# WhatsApp Web.js session / local auth
+# Prisma
+*.sqlite
+*.db
+prisma/dev.db
+
+# WhatsApp Web JS session/cache
+.wwebjs_auth/
+.wwebjs_cache/
 local-auth/
 __sessions__/
 .whatsapp-session/
 
 # Puppeteer / Chromium cache
 *.localstorage
-*.log
 *.tmp
 Default/
 Default-*
 SingletonLock
 
-# OS / IDE
-.DS_Store
-Thumbs.db
+# IDE configuration
 .vscode/
 .idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
 *.sublime-project
 *.sublime-workspace
-.wwebjs_auth
-.wwebjs_cache
-/generated/prisma
